@@ -5,10 +5,15 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 import pyproj
+import time
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 
 BASE_RAW_DIR = os.path.join("data", "raw")
 
 center_points = [
+    {"name": "strozewo", "pos": [ 	18.6458107,  	52.57286282]},
     {"name": "krakow_center", "pos": [19.9367, 50.0619]},
     {"name": "warszawa_outskirts", "pos": [21.0394, 52.3706]},
     {"name": "podlasie_village", "pos": [23.1567, 52.8234]},
@@ -16,8 +21,8 @@ center_points = [
     {"name": "lubelskie_farms", "pos": [23.1000, 51.2000]}
 ]
 
-OFFSET = 0.0015 
-SIZE = 512 
+OFFSET = 0.0030
+SIZE = 1024
 
 def download_data(name, lon, lat):
     bbox = [lon - OFFSET, lat - OFFSET, lon + OFFSET, lat + OFFSET]
@@ -77,4 +82,5 @@ def download_data(name, lon, lat):
 
 for point in center_points:
     download_data(point["name"], point["pos"][0], point["pos"][1])
+    time.sleep(3)
 print("\nDone!")
