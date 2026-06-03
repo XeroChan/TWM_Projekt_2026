@@ -16,7 +16,7 @@ Projekt składa się z kilku powiązanych ze sobą modułów, które realizują 
 
 ### **`main.py`** (Plik startowy)
 
-Plik startowy (entrypoint) całego projektu. Zarządza przepływem działania aplikacji (pipeline). Wykorzystuje bibliotekę `argparse` do przyjmowania argumentów z linii komend, co pozwala na uruchomienie poszczególnych etapów (np. pobierania danych, treningu czy predykcji) lub całego procesu naraz (flaga `--step all`). Plik ten zawiera również predefiniowane współrzędne (`CENTER_POINTS`) dla różnych typów miast i wsi, z których pobierane są dane satelitarne.
+Plik startowy (entrypoint) całego projektu. Zarządza przepływem działania aplikacji (pipeline). Wykorzystuje bibliotekę `argparse` do przyjmowania argumentów z linii komend, co pozwala na uruchomienie poszczególnych etapów (np. pobierania danych, treningu czy predykcji) lub całego procesu naraz (flaga `--step all`). Plik ten zawiera również predefiniowane współrzędne (`CENTER_POINTS`) dla różnych typów miast i wsi, z których pobierane są dane satelitarne. Kroki wykonywania potoku są opisane tekstowo w pliku. Zalecane jest uruchamianie pojedynczo od kroku 2 do ostatniego kroku predict z uwagi na to, że wykonanie kroku 1 fetch może zablokować użytkownika na geoportal.
 
 ---
 
