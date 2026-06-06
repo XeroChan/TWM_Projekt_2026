@@ -1,4 +1,5 @@
 import os
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"  # Wyłączenie logów OpenCV
 import cv2
 import numpy as np
 import torch
