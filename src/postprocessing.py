@@ -4,7 +4,7 @@ import numpy as np
 import os
 from src.unet_model import UNet
 
-def predict_and_count(image_path, model_path="models/unet_weights.pth", threshold=0.5, min_area=30):
+def predict_and_count(image_path, model_path="models/unet_weights.pth", threshold=0.3, min_area=30):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     if not os.path.exists(model_path):
