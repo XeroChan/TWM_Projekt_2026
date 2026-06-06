@@ -2,6 +2,7 @@ import os
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"  # Wyłączenie logów OpenCV
 import cv2
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -69,10 +70,11 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=5, save_path="mode
     print("Zapisano wagi klasyfikatora!")
 
 class BuildingDataset(Dataset):
-    def __init__(self, img_dir, mask_dir):
+    def __init__(self, img_dir, mask_dir, augment=True):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.images = [f for f in os.listdir(img_dir) if f.endswith('.png')]
+        self.augment = augment
 
     def __len__(self):
         return len(self.images)
@@ -86,6 +88,25 @@ class BuildingDataset(Dataset):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
+        # Simple on-the-fly augmentations (only applied when augment=True)
+        if self.augment:
+            # flips
+            if random.random() > 0.5:
+                img = cv2.flip(img, 1)
+                mask = cv2.flip(mask, 1)
+            if random.random() > 0.5:
+                img = cv2.flip(img, 0)
+                mask = cv2.flip(mask, 0)
+            # rotations by 90 deg
+            k = random.choice([0, 1, 2, 3])
+            if k:
+                img = np.rot90(img, k).copy()
+                mask = np.rot90(mask, k).copy()
+            # brightness/contrast jitter
+            if random.random() > 0.6:
+                factor = 0.8 + random.random() * 0.4
+                img = np.clip(img.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         mask = np.expand_dims(mask, axis=0).astype(np.float32) / 255.0
 
@@ -97,7 +118,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
     img_dir = os.path.join(processed_dir, "images")
     mask_dir = os.path.join(processed_dir, "masks")
     
-    dataset = BuildingDataset(img_dir, mask_dir)
+    dataset = BuildingDataset(img_dir, mask_dir, augment=True)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = UNet(in_channels=3, out_channels=1).to(device)
@@ -105,6 +126,14 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
     criterion = nn.BCEWithLogitsLoss()
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    def dice_coeff(pred, target, eps=1e-6):
+        pred_flat = pred.contiguous().view(pred.size(0), -1)
+        target_flat = target.contiguous().view(target.size(0), -1)
+        intersect = (pred_flat * target_flat).sum(dim=1)
+        denom = pred_flat.sum(dim=1) + target_flat.sum(dim=1)
+        dice = (2 * intersect + eps) / (denom + eps)
+        return dice.mean()
 
     for epoch in range(epochs):
         model.train()
@@ -114,7 +143,12 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
         for images, masks in loop:
             images, masks = images.to(device), masks.to(device)
             outputs = model(images)
-            loss = criterion(outputs, masks)
+
+            bce = criterion(outputs, masks)
+            probs = torch.sigmoid(outputs)
+            dice = dice_coeff(probs, masks)
+            dice_loss = 1.0 - dice
+            loss = bce + dice_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -122,7 +156,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
 
             epoch_loss += loss.item()
             loop.set_description(f"Epoch [{epoch+1}/{epochs}]")
-            loop.set_postfix(loss=loss.item())
+            loop.set_postfix(loss=loss.item(), dice=dice.item())
 
     torch.save(model.state_dict(), save_path)
     print("Zapisano wagi modelu!")
