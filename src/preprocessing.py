@@ -17,8 +17,12 @@ def tile_images_and_masks(img_raw_dir="data/raw/images", mask_interim_dir="data/
     
     img_out_dir = os.path.join(processed_dir, "images")
     mask_out_dir = os.path.join(processed_dir, "masks")
+    img_cities_out_dir = os.path.join(processed_dir, "images_city")
+    mask_cities_out_dir = os.path.join(processed_dir, "masks_city")
     os.makedirs(img_out_dir, exist_ok=True)
     os.makedirs(mask_out_dir, exist_ok=True)
+    os.makedirs(img_cities_out_dir, exist_ok=True)
+    os.makedirs(mask_cities_out_dir, exist_ok=True)
 
     raw_images = glob(os.path.join(img_raw_dir, "*_img.tif"))
 
@@ -54,7 +58,11 @@ def tile_images_and_masks(img_raw_dir="data/raw/images", mask_interim_dir="data/
                 if img_tile.shape[0] == tile_size and img_tile.shape[1] == tile_size:
                     # Dodajemy kordynaty do nazwy, żeby kafle się nie nadpisały
                     tile_name = f"{base_name}_{y}_{x}.png"
-                    cv2.imwrite(os.path.join(img_out_dir, tile_name), img_tile)
-                    cv2.imwrite(os.path.join(mask_out_dir, tile_name), mask_tile)
+                    if base_name.lower().startswith("miasto"):
+                        cv2.imwrite(os.path.join(img_cities_out_dir, tile_name), img_tile)
+                        cv2.imwrite(os.path.join(mask_cities_out_dir, tile_name), mask_tile)
+                    else:
+                        cv2.imwrite(os.path.join(img_out_dir, tile_name), img_tile)
+                        cv2.imwrite(os.path.join(mask_out_dir, tile_name), mask_tile)
                     
     print("Pre-processing (Center Crop -> Tiling) zakończony!")
