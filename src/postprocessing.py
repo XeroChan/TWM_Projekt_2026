@@ -4,6 +4,22 @@ import numpy as np
 import os
 from src.unet_model import UNet
 
+def build_clean_mask(pred_mask, threshold=0.5, min_area=30, kernel_size=3):
+    binary_mask = (pred_mask >= threshold).astype(np.uint8) * 255
+
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
+    cleaned_mask = np.zeros_like(binary_mask)
+
+    for i in range(1, num_labels):
+        if stats[i, cv2.CC_STAT_AREA] >= min_area:
+            cleaned_mask[labels == i] = 255
+
+    return cleaned_mask
+
 def predict_and_count(image_path, model_path="models/unet_weights.pth", threshold=0.3, min_area=30):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -25,7 +41,7 @@ def predict_and_count(image_path, model_path="models/unet_weights.pth", threshol
         pred_logits = model(img_tensor)
         pred_mask = torch.sigmoid(pred_logits).squeeze().cpu().numpy()
 
-    binary_mask = (pred_mask > threshold).astype(np.uint8) * 255
+    binary_mask = build_clean_mask(pred_mask, threshold=threshold, min_area=min_area)
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
     
     building_count = 0
