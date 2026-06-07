@@ -2,45 +2,12 @@ import os
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"  # Wyłączenie logów OpenCV
 import cv2
 import numpy as np
-import random
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from src.unet_model import UNet
 from src.classifier_model import CityVillageClassifier
-import torch.nn.functional as F
-
-class EdgeAwareLoss(nn.Module):
-    """
-    Funkcja straty, która oprócz pola powierzchni (BCE/Dice) 
-    zwraca uwagę na krawędzie (geometryczne obrysy).
-    """
-    def __init__(self):
-        super(EdgeAwareLoss, self).__init__()
-        # Filtry Sobela do wykrywania poziomych i pionowych krawędzi
-        sobel_x = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]).view(1, 1, 3, 3)
-        sobel_y = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]).view(1, 1, 3, 3)
-        
-        self.register_buffer('sobel_x', sobel_x)
-        self.register_buffer('sobel_y', sobel_y)
-
-    def extract_edges(self, x):
-        # Pobieranie krawędzi z predykcji/maski
-        edge_x = F.conv2d(x, self.sobel_x, padding=1)
-        edge_y = F.conv2d(x, self.sobel_y, padding=1)
-        return torch.sqrt(edge_x**2 + edge_y**2 + 1e-6)
-
-    def forward(self, pred, target):
-        pred_sigmoid = torch.sigmoid(pred)
-        
-        # Oblicz krawędzie z maski przewidzianej i maski prawdziwej
-        pred_edges = self.extract_edges(pred_sigmoid)
-        target_edges = self.extract_edges(target)
-        
-        # Standardowy L1 loss na krawędziach
-        edge_loss = F.l1_loss(pred_edges, target_edges)
-        return edge_loss
 
 class RawClassifierDataset(Dataset):
     def __init__(self, img_dir):
@@ -102,11 +69,10 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=5, save_path="mode
     print("Zapisano wagi klasyfikatora!")
 
 class BuildingDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, augment=True):
+    def __init__(self, img_dir, mask_dir):
         self.img_dir = img_dir
         self.mask_dir = mask_dir
         self.images = [f for f in os.listdir(img_dir) if f.endswith('.png')]
-        self.augment = augment
 
     def __len__(self):
         return len(self.images)
@@ -120,25 +86,6 @@ class BuildingDataset(Dataset):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
-        # Simple on-the-fly augmentations (only applied when augment=True)
-        if self.augment:
-            # flips
-            if random.random() > 0.5:
-                img = cv2.flip(img, 1)
-                mask = cv2.flip(mask, 1)
-            if random.random() > 0.5:
-                img = cv2.flip(img, 0)
-                mask = cv2.flip(mask, 0)
-            # rotations by 90 deg
-            k = random.choice([0, 1, 2, 3])
-            if k:
-                img = np.rot90(img, k).copy()
-                mask = np.rot90(mask, k).copy()
-            # brightness/contrast jitter
-            if random.random() > 0.6:
-                factor = 0.8 + random.random() * 0.4
-                img = np.clip(img.astype(np.float32) * factor, 0, 255).astype(np.uint8)
-
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
         mask = np.expand_dims(mask, axis=0).astype(np.float32) / 255.0
 
@@ -150,23 +97,14 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
     img_dir = os.path.join(processed_dir, "images")
     mask_dir = os.path.join(processed_dir, "masks")
     
-    dataset = BuildingDataset(img_dir, mask_dir, augment=True)
+    dataset = BuildingDataset(img_dir, mask_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = UNet(in_channels=3, out_channels=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    criterion_bce = nn.BCEWithLogitsLoss()
-    criterion_edge = EdgeAwareLoss().to(device)
+    criterion = nn.BCEWithLogitsLoss()
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    def dice_coeff(pred, target, eps=1e-6):
-        pred_flat = pred.contiguous().view(pred.size(0), -1)
-        target_flat = target.contiguous().view(target.size(0), -1)
-        intersect = (pred_flat * target_flat).sum(dim=1)
-        denom = pred_flat.sum(dim=1) + target_flat.sum(dim=1)
-        dice = (2 * intersect + eps) / (denom + eps)
-        return dice.mean()
 
     for epoch in range(epochs):
         model.train()
@@ -176,20 +114,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
         for images, masks in loop:
             images, masks = images.to(device), masks.to(device)
             outputs = model(images)
-
-            # 1. Podstawowa strata na pikselach
-            bce = criterion_bce(outputs, masks)
-            
-            # 2. Strata na wielkości plam
-            probs = torch.sigmoid(outputs)
-            dice = dice_coeff(probs, masks)
-            dice_loss = 1.0 - dice
-            
-            # 3. Strata na "rozlanych" krawędziach (zmusza do rysowania prostych linii)
-            edge_loss = criterion_edge(outputs, masks) # <--- DODANO
-
-            # Łączny koszt
-            loss = bce + dice_loss + (0.5 * edge_loss) # <--- DODANO
+            loss = criterion(outputs, masks)
 
             optimizer.zero_grad()
             loss.backward()
@@ -197,7 +122,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_pa
 
             epoch_loss += loss.item()
             loop.set_description(f"Epoch [{epoch+1}/{epochs}]")
-            loop.set_postfix(loss=loss.item(), dice=dice.item())
+            loop.set_postfix(loss=loss.item())
 
     torch.save(model.state_dict(), save_path)
     print("Zapisano wagi modelu!")
