@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import os
 from src.unet_model import UNet
+import rasterio
 
 def build_clean_mask(pred_mask, threshold=0.5, min_area=30, kernel_size=3):
     binary_mask = (pred_mask >= threshold).astype(np.uint8) * 255
@@ -52,5 +53,20 @@ def predict_and_count(image_path, model_path="models/unet_weights.pth", threshol
     print(f"Znaleziono {building_count} budynków na zdjęciu.")
     
     out_path = f"prediction_{os.path.basename(image_path)}"
-    cv2.imwrite(out_path, binary_mask)
-    print(f"Zapisano wizualizację maski predykcyjnej jako {out_path}")
+    
+    # Zapisz maskę predykcyjną jako GeoTIFF, zachowując georeferencję, jeśli to możliwe
+    try:
+        with rasterio.open(image_path) as src:
+            profile = src.profile
+            profile.update(
+                dtype=rasterio.uint8,
+                count=1,
+                compress='lzw'
+            )
+            with rasterio.open(out_path, 'w', **profile) as dst:
+                dst.write(binary_mask, 1)
+        print(f"Zapisano maskę predykcyjną (GeoTIFF) jako {out_path}")
+    except Exception as e:
+        # Jeśli wystąpi błąd (np. brak georeferencji), zapisz maskę jako zwykły obraz PNG
+        cv2.imwrite(out_path, binary_mask)
+        print(f"Zapisano wizualizację maski predykcyjnej jako {out_path} (bez georeferencji)")
