@@ -4,6 +4,47 @@ import numpy as np
 import os
 from src.unet_model import UNet
 import rasterio
+import base64
+from IPython.display import display, HTML
+
+def visualize_prediction(original_img_path, prediction_mask_path):
+    """
+    Wyświetla interaktywny suwak "przed i po" w środowisku Jupyter/Colab.
+    """
+    if not os.path.exists(original_img_path) or not os.path.exists(prediction_mask_path):
+        print(f"Błąd: Nie znaleziono plików!\nObraz: {original_img_path}\nMaska: {prediction_mask_path}")
+        return
+
+    def image_to_base64(path):
+        img = cv2.imread(path)
+        if img is None:
+            return ""
+        _, buffer = cv2.imencode('.png', img)
+        return base64.b64encode(buffer).decode('utf-8')
+
+    b64_img1 = image_to_base64(original_img_path)
+    b64_img2 = image_to_base64(prediction_mask_path)
+
+    if not b64_img1 or not b64_img2:
+        print("Błąd kompresji obrazu.")
+        return
+
+    html_code = f"""
+    <div class="slider-container" style="position: relative; width: 512px; height: 512px; overflow: hidden; border: 2px solid #333; margin: auto;">
+        <img src="data:image/png;base64,{b64_img2}" style="position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1;">
+        <div id="slider-overlay" style="position: absolute; top: 0; left: 0; bottom: 0; width: 50%; z-index: 2; overflow: hidden; border-right: 3px solid white;">
+            <img src="data:image/png;base64,{b64_img1}" style="width: 512px; height: 512px; object-fit: contain;">
+        </div>
+        <input type="range" min="1" max="100" value="50" class="slider" id="split-slider" 
+               style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; opacity: 0; cursor: ew-resize;"
+               oninput="document.getElementById('slider-overlay').style.width = this.value + '%';">
+    </div>
+    <div style="text-align: center; margin-top: 10px; font-family: sans-serif;">
+        <strong>Przed</strong> (Oryginał) &lt;--- Przesuń myszką po zdjęciu ---&gt; <strong>Po</strong> (Maska AI)
+    </div>
+    """
+    
+    display(HTML(html_code))
 
 def build_clean_mask(pred_mask, threshold=0.5, min_area=30, kernel_size=3):
     binary_mask = (pred_mask >= threshold).astype(np.uint8) * 255
