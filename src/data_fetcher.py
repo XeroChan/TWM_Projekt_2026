@@ -2,18 +2,15 @@ import os
 import time
 import requests
 import numpy as np
-import pyproj
 import leafmap
 from PIL import Image
 from io import BytesIO
 
-def fetch_all_data(center_points, offset_meters=300, size=1024):
+def fetch_all_data(center_points, offset_deg=0.0030, size=1024):
     img_dir = "data/raw/images"
     mask_dir = "data/raw/masks"
     os.makedirs(img_dir, exist_ok=True)
     os.makedirs(mask_dir, exist_ok=True)
-    
-    transformer = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:2180", always_xy=True)
 
     wms_ortho = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"
     wms_kieg = "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
@@ -22,31 +19,27 @@ def fetch_all_data(center_points, offset_meters=300, size=1024):
         name = point["name"]
         lon, lat = point["pos"]
         
-        cx, cy = transformer.transform(lon, lat)
-        min_x = cx - offset_meters
-        min_y = cy - offset_meters
-        max_x = cx + offset_meters
-        max_y = cy + offset_meters
-        
-        bbox_2180 = [min_x, min_y, max_x, max_y]
-        bbox_str = f"{min_x},{min_y},{max_x},{max_y}"
+        # BBOX w stopniach - IDEALNIE TEN SAM dla zdjęcia i maski
+        bbox = [lon - offset_deg, lat - offset_deg, lon + offset_deg, lat + offset_deg]
+        bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
 
         img_path = os.path.join(img_dir, f"{name}_img.tif")
         mask_path = os.path.join(mask_dir, f"{name}_mask.tif")
 
         downloaded_anything = False
 
+        # --- POBIERANIE ZDJĘCIA ---
         if not os.path.exists(img_path):
             print(f"[{name}] Pobieranie ortofotomapy...")
             try:
                 leafmap.wms_to_geotiff(
                     url=wms_ortho, 
-                    bbox=bbox_2180, 
+                    bbox=bbox, 
                     layers="Raster",
                     output=img_path, 
                     width=size, 
                     height=size, 
-                    CRS="EPSG:2180"
+                    CRS="EPSG:4326"
                 )
                 downloaded_anything = True
             except Exception as e:
@@ -54,11 +47,14 @@ def fetch_all_data(center_points, offset_meters=300, size=1024):
         else:
             print(f"[{name}] Zdjęcie gotowe. Pomijam.")
 
+        # --- POBIERANIE MASKI ---
         if not os.path.exists(mask_path):
             print(f"[{name}] Pobieranie masek budynków...")
+            
+            # Parametry z wymuszonym EPSG:4326 i identycznym bbox_str
             params = {
                 "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap",
-                "LAYERS": "budynki", "SRS": "EPSG:2180",
+                "LAYERS": "budynki", "SRS": "EPSG:4326",
                 "BBOX": bbox_str,
                 "WIDTH": size, "HEIGHT": size, "FORMAT": "image/png", "TRANSPARENT": "TRUE"
             }
@@ -78,5 +74,6 @@ def fetch_all_data(center_points, offset_meters=300, size=1024):
         else:
             print(f"[{name}] Maska gotowa. Pomijam.")
 
+        # Krótka przerwa dla serwera, tylko gdy pobieraliśmy
         if downloaded_anything:
             time.sleep(2)
