@@ -23,6 +23,8 @@ def fetch_all_data(center_points, offset=0.0030, size=1024):
         img_path = os.path.join(img_dir, f"{name}_img.tif")
         mask_path = os.path.join(mask_dir, f"{name}_mask.tif")
 
+        downloaded = False
+
         if not os.path.exists(img_path):
             print(f"[{name}] Pobieranie ortofotomapy...")
             wms_ortho = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"
@@ -30,6 +32,7 @@ def fetch_all_data(center_points, offset=0.0030, size=1024):
                 url=wms_ortho, bbox=bbox, layers="Raster",
                 output=img_path, width=size, height=size, CRS="EPSG:4326"
             )
+            downloaded = True
 
         if not os.path.exists(mask_path):
             print(f"[{name}] Pobieranie masek budynków...")
@@ -51,7 +54,9 @@ def fetch_all_data(center_points, offset=0.0030, size=1024):
                     alpha = np.array(img_rgba)[:, :, 3]
                     binary_mask = np.where(alpha > 0, 255, 0).astype(np.uint8)
                     Image.fromarray(binary_mask).save(mask_path)
+                    downloaded = True
             except Exception as e:
                 print(f"[{name}] Błąd: {e}")
 
-        time.sleep(10)
+        if downloaded:
+            time.sleep(10)
