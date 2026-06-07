@@ -4,7 +4,8 @@ venv/
 env/
 
 # Data
-data/
+data/interim/
+data/processed/
 *.tif
 *.png
 
