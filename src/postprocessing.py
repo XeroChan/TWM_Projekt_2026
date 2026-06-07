@@ -8,7 +8,6 @@ import plotly.express as px
 import random
 
 def interactive_instance_viewer(original_img_path, prediction_mask_path):
-    # 1. Wczytanie plików
     img = cv2.imread(original_img_path)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) 
     mask = cv2.imread(prediction_mask_path, cv2.IMREAD_GRAYSCALE)
@@ -17,46 +16,51 @@ def interactive_instance_viewer(original_img_path, prediction_mask_path):
         print("Błąd: Nie można wczytać obrazu lub maski!")
         return
 
-    # 2. Szukanie wszystkich osobnych plam na masce
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 3. Przetwarzanie każdego budynku osobno
-    # Zmienna 'i' to numer budynku, 'cnt' to jego kształt
     for i, cnt in enumerate(contours):
-        
-        # Ignorujemy ewentualne mikroskopijne kropki (szum) o polu mniejszym niż 10 pikseli
         if cv2.contourArea(cnt) < 10:
             continue
 
-        # Losowanie jaskrawego koloru RGB dla każdego budynku (wartości od 50 do 255)
         color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
         
-        # --- KROK A: Rysowanie dokładnego obrysu dachu ---
-        cv2.drawContours(img_rgb, [cnt], -1, color, thickness=2)
+        # --- Rysujemy TYLKO kontur (grubość 1, żeby był subtelniejszy) ---
+        cv2.drawContours(img_rgb, [cnt], -1, color, thickness=1)
 
-        # --- KROK B: Tworzenie prostokąta (Bounding Box) wokół budynku ---
-        # Funkcja boundingRect zwraca współrzędne lewego górnego rogu (x, y) oraz szerokość i wysokość (w, h)
+        # Pobieramy kordynaty, żeby wiedzieć, gdzie "wisi" najwyższy punkt dachu (y)
         x, y, w, h = cv2.boundingRect(cnt)
-        cv2.rectangle(img_rgb, (x, y), (x + w, y + h), color, thickness=1)
 
-        # --- KROK C: Dodawanie etykiety (np. "Budynek 1") ---
         label = f"Budynek {i + 1}"
+        font_scale = 0.4
+        font_thickness = 1
         
-        # Aby tekst był czytelny na każdym tle, rysujemy najpierw mały czarny prostokącik jako tło pod napis
-        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-        cv2.rectangle(img_rgb, (x, y - text_h - 4), (x + text_w, y), (0, 0, 0), thickness=cv2.FILLED)
+        # Pobieramy dokładne wymiary tekstu
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
         
-        # Nakładanie tekstu w kolorze przypisanym do budynku
-        cv2.putText(img_rgb, label, (x, y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, thickness=1)
+        # Margines, żeby odkleić napis od dachu (np. 5 pikseli)
+        padding = 5
 
-    # 4. Wyświetlenie interaktywne w Plotly
-    fig = px.imshow(img_rgb, title="Detekcja Instancji (Każdy budynek osobno)")
-    
-    # Kosmetyka okna
+        # Obliczanie pozycji napisu
+        if y > text_h + padding * 2:
+            # Jest miejsce NAD budynkiem
+            bg_y1 = y - text_h - padding * 2
+            bg_y2 = y - padding
+            text_y = y - padding - baseline
+        else:
+            # Budynek jest przyklejony do górnej krawędzi zdjęcia - dajemy napis POD
+            bg_y1 = y + h + padding
+            bg_y2 = y + h + text_h + padding * 2
+            text_y = bg_y2 - padding - baseline
+
+        # Rysowanie tła oraz tekstu
+        cv2.rectangle(img_rgb, (x, bg_y1), (x + text_w, bg_y2), (0, 0, 0), thickness=cv2.FILLED)
+        cv2.putText(img_rgb, label, (x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
+
+    # Wyświetlanie w Plotly
+    fig = px.imshow(img_rgb, title="Detekcja Instancji (Tylko kontury)")
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
     fig.update_layout(dragmode="pan", margin=dict(l=0, r=0, b=0, t=30))
-    
     fig.show()
 
 def build_clean_mask(pred_mask, threshold=0.5, min_area=30, kernel_size=3):
