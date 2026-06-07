@@ -4,47 +4,59 @@ import numpy as np
 import os
 from src.unet_model import UNet
 import rasterio
-import base64
-from IPython.display import display, HTML
+import plotly.express as px
 
-def visualize_prediction(original_img_path, prediction_mask_path):
-    """
-    Wyświetla interaktywny suwak "przed i po" w środowisku Jupyter/Colab.
-    """
-    if not os.path.exists(original_img_path) or not os.path.exists(prediction_mask_path):
-        print(f"Błąd: Nie znaleziono plików!\nObraz: {original_img_path}\nMaska: {prediction_mask_path}")
+def interactive_instance_viewer(original_img_path, prediction_mask_path):
+    # 1. Wczytanie plików
+    img = cv2.imread(original_img_path)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) 
+    mask = cv2.imread(prediction_mask_path, cv2.IMREAD_GRAYSCALE)
+
+    if img is None or mask is None:
+        print("Błąd: Nie można wczytać obrazu lub maski!")
         return
 
-    def image_to_base64(path):
-        img = cv2.imread(path)
-        if img is None:
-            return ""
-        _, buffer = cv2.imencode('.png', img)
-        return base64.b64encode(buffer).decode('utf-8')
+    # 2. Szukanie wszystkich osobnych plam na masce
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    b64_img1 = image_to_base64(original_img_path)
-    b64_img2 = image_to_base64(prediction_mask_path)
+    # 3. Przetwarzanie każdego budynku osobno
+    # Zmienna 'i' to numer budynku, 'cnt' to jego kształt
+    for i, cnt in enumerate(contours):
+        
+        # Ignorujemy ewentualne mikroskopijne kropki (szum) o polu mniejszym niż 10 pikseli
+        if cv2.contourArea(cnt) < 10:
+            continue
 
-    if not b64_img1 or not b64_img2:
-        print("Błąd kompresji obrazu.")
-        return
+        # Losowanie jaskrawego koloru RGB dla każdego budynku (wartości od 50 do 255)
+        color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
+        
+        # --- KROK A: Rysowanie dokładnego obrysu dachu ---
+        cv2.drawContours(img_rgb, [cnt], -1, color, thickness=2)
 
-    html_code = f"""
-    <div class="slider-container" style="position: relative; width: 512px; height: 512px; overflow: hidden; border: 2px solid #333; margin: auto;">
-        <img src="data:image/png;base64,{b64_img2}" style="position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1;">
-        <div id="slider-overlay" style="position: absolute; top: 0; left: 0; bottom: 0; width: 50%; z-index: 2; overflow: hidden; border-right: 3px solid white;">
-            <img src="data:image/png;base64,{b64_img1}" style="width: 512px; height: 512px; object-fit: contain;">
-        </div>
-        <input type="range" min="1" max="100" value="50" class="slider" id="split-slider" 
-               style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; opacity: 0; cursor: ew-resize;"
-               oninput="document.getElementById('slider-overlay').style.width = this.value + '%';">
-    </div>
-    <div style="text-align: center; margin-top: 10px; font-family: sans-serif;">
-        <strong>Przed</strong> (Oryginał) &lt;--- Przesuń myszką po zdjęciu ---&gt; <strong>Po</strong> (Maska AI)
-    </div>
-    """
+        # --- KROK B: Tworzenie prostokąta (Bounding Box) wokół budynku ---
+        # Funkcja boundingRect zwraca współrzędne lewego górnego rogu (x, y) oraz szerokość i wysokość (w, h)
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.rectangle(img_rgb, (x, y), (x + w, y + h), color, thickness=1)
+
+        # --- KROK C: Dodawanie etykiety (np. "Budynek 1") ---
+        label = f"Budynek {i + 1}"
+        
+        # Aby tekst był czytelny na każdym tle, rysujemy najpierw mały czarny prostokącik jako tło pod napis
+        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        cv2.rectangle(img_rgb, (x, y - text_h - 4), (x + text_w, y), (0, 0, 0), thickness=cv2.FILLED)
+        
+        # Nakładanie tekstu w kolorze przypisanym do budynku
+        cv2.putText(img_rgb, label, (x, y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, thickness=1)
+
+    # 4. Wyświetlenie interaktywne w Plotly
+    fig = px.imshow(img_rgb, title="Detekcja Instancji (Każdy budynek osobno)")
     
-    display(HTML(html_code))
+    # Kosmetyka okna
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.update_layout(dragmode="pan", margin=dict(l=0, r=0, b=0, t=30))
+    
+    fig.show()
 
 def build_clean_mask(pred_mask, threshold=0.5, min_area=30, kernel_size=3):
     binary_mask = (pred_mask >= threshold).astype(np.uint8) * 255
