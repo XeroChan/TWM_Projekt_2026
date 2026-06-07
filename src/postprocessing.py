@@ -5,6 +5,7 @@ import os
 from src.unet_model import UNet
 import rasterio
 import plotly.express as px
+import random
 
 def interactive_instance_viewer(original_img_path, prediction_mask_path):
     # 1. Wczytanie plików
