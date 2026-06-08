@@ -24,3 +24,17 @@ def dice_coeff(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> t
     intersect = (pred_flat * target_flat).sum(dim=1)
     denom = pred_flat.sum(dim=1) + target_flat.sum(dim=1)
     return ((2 * intersect + eps) / (denom + eps)).mean()
+
+def iou_coeff(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Calculate Intersection over Union (IoU) for binary masks."""
+    pred_flat = pred.contiguous().view(pred.size(0), -1)
+    target_flat = target.contiguous().view(target.size(0), -1)
+    intersect = (pred_flat * target_flat).sum(dim=1)
+    union = pred_flat.sum(dim=1) + target_flat.sum(dim=1) - intersect
+    return ((intersect + eps) / (union + eps)).mean()
+
+def calculate_accuracy(outputs: torch.Tensor, targets: torch.Tensor) -> float:
+    """Calculate accuracy for binary classification with logits."""
+    preds_binary = (torch.sigmoid(outputs) > 0.5).float()
+    correct = (preds_binary == targets).sum().item()
+    return correct / targets.numel()
