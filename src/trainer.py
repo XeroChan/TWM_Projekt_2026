@@ -68,7 +68,8 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=10,
 
     model = UNet(in_channels=3, out_channels=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    criterion = nn.BCEWithLogitsLoss()
+    pos_weight = torch.tensor([10.0]).to(device)  # budynki ~10% pikseli → wyrównaj klasy
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     best_val_dice = 0.0

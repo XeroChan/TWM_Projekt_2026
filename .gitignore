@@ -6,8 +6,10 @@ env/
 # Data
 data/interim/
 data/processed/
+data/predictions/
 *.tif
 *.png
+*.aux.xml
 
 # Python cache
 **/__pycache__/

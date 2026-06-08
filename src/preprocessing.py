@@ -58,7 +58,8 @@ def tile_images_and_masks(img_raw_dir="data/raw/images", mask_interim_dir="data/
                 if img_tile.shape[0] == tile_size and img_tile.shape[1] == tile_size:
                     # Dodajemy kordynaty do nazwy, żeby kafle się nie nadpisały
                     tile_name = f"{base_name}_{y}_{x}.png"
-                    if base_name.lower().startswith("miasto"):
+                    # Kafel z pustą maską (miasto) idzie do city_folder i nie trafia do treningu
+                    if mask_tile.max() == 0:
                         cv2.imwrite(os.path.join(img_cities_out_dir, tile_name), img_tile)
                         cv2.imwrite(os.path.join(mask_cities_out_dir, tile_name), mask_tile)
                     else:
