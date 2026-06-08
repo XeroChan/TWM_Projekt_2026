@@ -1,45 +1,22 @@
 import os
-os.environ["OPENCV_LOG_LEVEL"] = "ERROR"  # Wyłączenie logów OpenCV
-import cv2
-import numpy as np
 import random
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+from src.datasets import RawClassifierDataset, BuildingDataset
 from src.unet_model import UNet
 from src.classifier_model import CityVillageClassifier
+from src.utils import dice_coeff
 
-class RawClassifierDataset(Dataset):
-    def __init__(self, img_dir):
-        self.img_dir = img_dir
-        self.images = [f for f in os.listdir(img_dir) if f.endswith('_img.tif')]
 
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        img_name = self.images[idx]
-        img_path = os.path.join(self.img_dir, img_name)
-
-        img = cv2.imread(img_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # Klasyfikator potrzebuje mniejszych zdjęć do szybkiej nauki (np. 256x256)
-        img = cv2.resize(img, (256, 256)) 
-        img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
-
-        # Klasyfikator potrzebuje "prawdy" (Ground Truth) do nauki. 
-        # Nazwy plików służą TU TYLKO do nauki klasyfikatora.
-        label = 1.0 if "miasto_" in img_name else 0.0
-
-        return torch.tensor(img), torch.tensor([label], dtype=torch.float32)
-
-def train_classifier(raw_dir="data/raw", batch_size=8, epochs=5, save_path="models/classifier_weights.pth"):
+def train_classifier(raw_dir="data/raw", batch_size=8, epochs=5,
+                     save_path="models/classifier_weights.pth"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Trening klasyfikatora na urządzeniu: {device}")
-    
-    img_dir = os.path.join(raw_dir, "images")
-    dataset = RawClassifierDataset(img_dir)
+
+    dataset = RawClassifierDataset(os.path.join(raw_dir, "images"))
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = CityVillageClassifier().to(device)
@@ -51,112 +28,85 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=5, save_path="mode
     for epoch in range(epochs):
         model.train()
         loop = tqdm(loader, leave=True)
-        epoch_loss = 0
-
         for images, labels in loop:
             images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-
+            loss = criterion(model(images), labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            epoch_loss += loss.item()
             loop.set_description(f"Klasyfikator Epoka [{epoch+1}/{epochs}]")
             loop.set_postfix(loss=loss.item())
 
     torch.save(model.state_dict(), save_path)
     print("Zapisano wagi klasyfikatora!")
 
-class BuildingDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, augment=True):
-        self.img_dir = img_dir
-        self.mask_dir = mask_dir
-        self.images = [f for f in os.listdir(img_dir) if f.endswith('.png')]
-        self.augment = augment
 
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        img_name = self.images[idx]
-        img_path = os.path.join(self.img_dir, img_name)
-        mask_path = os.path.join(self.mask_dir, img_name)
-
-        img = cv2.imread(img_path)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-
-        # Simple on-the-fly augmentations (only applied when augment=True)
-        if self.augment:
-            # flips
-            if random.random() > 0.5:
-                img = cv2.flip(img, 1)
-                mask = cv2.flip(mask, 1)
-            if random.random() > 0.5:
-                img = cv2.flip(img, 0)
-                mask = cv2.flip(mask, 0)
-            # rotations by 90 deg
-            k = random.choice([0, 1, 2, 3])
-            if k:
-                img = np.rot90(img, k).copy()
-                mask = np.rot90(mask, k).copy()
-            # brightness/contrast jitter
-            if random.random() > 0.6:
-                factor = 0.8 + random.random() * 0.4
-                img = np.clip(img.astype(np.float32) * factor, 0, 255).astype(np.uint8)
-
-        img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
-        mask = np.expand_dims(mask, axis=0).astype(np.float32) / 255.0
-
-        return torch.tensor(img), torch.tensor(mask)
-
-def train_model(processed_dir="data/processed", batch_size=8, epochs=10, save_path="models/unet_weights.pth"):
+def train_model(processed_dir="data/processed", batch_size=8, epochs=10,
+                save_path="models/unet_weights.pth", val_split=0.15):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     img_dir = os.path.join(processed_dir, "images")
     mask_dir = os.path.join(processed_dir, "masks")
-    
-    dataset = BuildingDataset(img_dir, mask_dir, augment=True)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    all_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.png')])
+    random.seed(42)
+    random.shuffle(all_files)
+    val_size = max(1, int(len(all_files) * val_split))
+    val_files = all_files[:val_size]
+    train_files = all_files[val_size:]
+
+    print(f"Podział danych: {len(train_files)} treningowych, {len(val_files)} walidacyjnych")
+
+    train_loader = DataLoader(
+        BuildingDataset(img_dir, mask_dir, augment=True, file_list=train_files),
+        batch_size=batch_size, shuffle=True
+    )
+    val_loader = DataLoader(
+        BuildingDataset(img_dir, mask_dir, augment=False, file_list=val_files),
+        batch_size=batch_size, shuffle=False
+    )
 
     model = UNet(in_channels=3, out_channels=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss()
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-    def dice_coeff(pred, target, eps=1e-6):
-        pred_flat = pred.contiguous().view(pred.size(0), -1)
-        target_flat = target.contiguous().view(target.size(0), -1)
-        intersect = (pred_flat * target_flat).sum(dim=1)
-        denom = pred_flat.sum(dim=1) + target_flat.sum(dim=1)
-        dice = (2 * intersect + eps) / (denom + eps)
-        return dice.mean()
+    best_val_dice = 0.0
 
     for epoch in range(epochs):
+        # --- trening ---
         model.train()
-        loop = tqdm(loader, leave=True)
-        epoch_loss = 0
-
+        loop = tqdm(train_loader, leave=True)
         for images, masks in loop:
             images, masks = images.to(device), masks.to(device)
             outputs = model(images)
-
-            bce = criterion(outputs, masks)
             probs = torch.sigmoid(outputs)
-            dice = dice_coeff(probs, masks)
-            dice_loss = 1.0 - dice
-            loss = bce + dice_loss
-
+            loss = criterion(outputs, masks) + (1.0 - dice_coeff(probs, masks))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            epoch_loss += loss.item()
             loop.set_description(f"Epoch [{epoch+1}/{epochs}]")
-            loop.set_postfix(loss=loss.item(), dice=dice.item())
+            loop.set_postfix(loss=loss.item(), dice=dice_coeff(probs, masks).item())
 
-    torch.save(model.state_dict(), save_path)
-    print("Zapisano wagi modelu!")
+        # --- walidacja ---
+        model.eval()
+        val_loss = val_dice = 0.0
+        with torch.no_grad():
+            for images, masks in val_loader:
+                images, masks = images.to(device), masks.to(device)
+                outputs = model(images)
+                probs = torch.sigmoid(outputs)
+                d = dice_coeff(probs, masks)
+                val_loss += (criterion(outputs, masks) + (1.0 - d)).item()
+                val_dice += d.item()
+
+        val_loss /= len(val_loader)
+        val_dice /= len(val_loader)
+        print(f"  Val loss: {val_loss:.4f} | Val Dice: {val_dice:.4f}")
+
+        if val_dice > best_val_dice:
+            best_val_dice = val_dice
+            torch.save(model.state_dict(), save_path)
+            print(f"  -> Najlepszy model zapisany (val dice: {best_val_dice:.4f})")
+
+    print(f"Trening zakończony. Najlepszy val Dice: {best_val_dice:.4f}")
