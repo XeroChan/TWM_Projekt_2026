@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import rasterio
 import plotly.express as px
-import plotly.graph_objects as go
 
 from src.unet_model import UNet
 from src.utils import image_to_tensor, load_model
@@ -25,12 +24,11 @@ _BBOX_PALETTE = [
 
 def interactive_instance_viewer(original_img_path: str, prediction_mask_path: str):
     img = cv2.imread(original_img_path)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     mask = cv2.imread(prediction_mask_path, cv2.IMREAD_GRAYSCALE)
-
     if img is None or mask is None:
         print("Błąd: Nie można wczytać obrazu lub maski!")
         return
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -77,6 +75,9 @@ def bbox_detection_viewer(image_path: str, mask: np.ndarray, min_area: int = 30,
     Shows result in interactive Plotly window and optionally saves to file.
     """
     img = cv2.imread(image_path)
+    if img is None:
+        print(f"Błąd: Nie można wczytać obrazu: {image_path}")
+        return
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).copy()
 
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
@@ -154,6 +155,9 @@ def predict_and_count(image_path: str, model_path: str = "models/unet_weights.pt
     model = load_model(UNet(in_channels=3, out_channels=1), model_path, device)
 
     img = cv2.imread(image_path)
+    if img is None:
+        print(f"Błąd: Nie można wczytać obrazu: {image_path}")
+        return
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img_tensor = image_to_tensor(img_rgb).to(device)
 

@@ -18,6 +18,8 @@ class RawClassifierDataset(Dataset):
     def __getitem__(self, idx: int):
         img_name = self.images[idx]
         img = cv2.imread(os.path.join(self.img_dir, img_name))
+        if img is None:
+            raise FileNotFoundError(f"Nie można wczytać: {img_name}")
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (256, 256))
         img = img.transpose((2, 0, 1)).astype(np.float32) / 255.0
@@ -41,8 +43,10 @@ class BuildingDataset(Dataset):
     def __getitem__(self, idx: int):
         img_name = self.images[idx]
         img = cv2.imread(os.path.join(self.img_dir, img_name))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(os.path.join(self.mask_dir, img_name), cv2.IMREAD_GRAYSCALE)
+        if img is None or mask is None:
+            raise FileNotFoundError(f"Nie można wczytać: {img_name}")
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         if self.augment:
             if random.random() > 0.5:
