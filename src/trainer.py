@@ -173,7 +173,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=15,
 
     model = UNet(in_channels=3, out_channels=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    pos_weight = torch.tensor([10.0]).to(device)
+    pos_weight = torch.tensor([5.0]).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -222,8 +222,13 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=15,
                 loss = criterion(outputs, masks) + (1.0 - d_coeff)
                 
                 val_loss += loss.item()
-                val_dice += d_coeff.item()
-                val_iou += iou_coeff(probs, masks).item()
+
+                # Sprawdzanie czy wartość progowa jest większa niż 0.5, aby uzyskać binarną maskę
+                preds_binary = (probs > 0.5).float()
+
+                # Metryki ewaluacyjne na binarnych maskach
+                val_dice += dice_coeff(preds_binary, masks).item()
+                val_iou += iou_coeff(preds_binary, masks).item()
 
         val_loss /= len(val_loader)
         val_dice /= len(val_loader)
