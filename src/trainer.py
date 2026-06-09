@@ -146,8 +146,8 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=15,
     plot_metrics(history, title="Klasyfikator (Miasto vs Wieś)", save_path=plot_path)
 
 
-def train_model(processed_dir="data/processed", batch_size=8, epochs=15,
-                save_path="models/unet_weights.pth", val_split=0.15, patience=5):
+def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
+                save_path="models/unet_weights.pth", val_split=0.15, patience=10):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     img_dir = os.path.join(processed_dir, "images")
@@ -173,14 +173,14 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=15,
 
     model = UNet(in_channels=3, out_channels=1).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    pos_weight = torch.tensor([5.0]).to(device)
+    pos_weight = torch.tensor([4.0]).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    best_val_loss = float("inf")
+    best_val_dice = 0.0
     epochs_no_improve = 0
-    
+
     history = {'train_loss': [], 'val_loss': [], 'train_dice': [], 'val_dice': [], 'train_iou': [], 'val_iou': []}
 
     for epoch in range(epochs):
@@ -243,19 +243,19 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=15,
         
         print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} Dice: {train_dice:.4f} IoU: {train_iou:.4f} | Val Loss: {val_loss:.4f} Dice: {val_dice:.4f} IoU: {val_iou:.4f}")
 
-        # Early Stopping na podstawie najniższego Loss
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Early Stopping na podstawie najwyższego Val Dice (a nie Loss)
+        if val_dice > best_val_dice:
+            best_val_dice = val_dice
             epochs_no_improve = 0
             torch.save(model.state_dict(), save_path)
-            print(f"  -> Najlepszy model zapisany (Val Loss: {best_val_loss:.4f})")
+            print(f"  -> Najlepszy model zapisany (Val Dice: {best_val_dice:.4f})")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
                 print(f"Early stopping po {patience} epokach braku poprawy.")
                 break
 
-    print(f"Trening U-Net zakończony. Najlepszy Val Loss: {best_val_loss:.4f}")
+    print(f"Trening U-Net zakończony. Najlepszy Val Dice: {best_val_dice:.4f}")
     
     # Generowanie wykresów
     plot_path = save_path.replace(".pth", "_metrics.png")

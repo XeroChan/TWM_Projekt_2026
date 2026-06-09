@@ -61,7 +61,7 @@ def build_clean_mask(pred_mask: np.ndarray, threshold: float = 0.5,
     binary = (pred_mask >= threshold).astype(np.uint8) * 255
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     cleaned = np.zeros_like(binary)
@@ -75,7 +75,7 @@ def build_clean_mask(pred_mask: np.ndarray, threshold: float = 0.5,
 
 
 def predict_and_count(image_path: str, model_path: str = "models/unet_weights.pth",
-                      threshold: float = 0.3, min_area: int = 30,
+                      threshold: float = 0.5, min_area: int = 30,
                       output_dir: str = "data/predictions", visualize: bool = True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
