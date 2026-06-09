@@ -60,8 +60,7 @@ def build_clean_mask(pred_mask: np.ndarray, threshold: float = 0.5,
     """Return (cleaned binary mask, building count)."""
     binary = (pred_mask >= threshold).astype(np.uint8) * 255
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+    binary = cv2.erode(binary, kernel, iterations=1)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     cleaned = np.zeros_like(binary)
