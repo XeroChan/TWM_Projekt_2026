@@ -1,57 +1,95 @@
 # Detekcja i zliczanie zabudowań na zdjęciach lotniczych
 
-Projekt wykorzystujący architekturę U-Net do segmentacji semantycznej i detekcji budynków na niezurbanizowanych obszarach Polski. 
+Projekt wykorzystujący architekturę U-Net do segmentacji semantycznej i detekcji budynków na niezurbanizowanych obszarach Polski.
 Dane pobierane są automatycznie z usług WMS Głównego Urzędu Geodezji i Kartografii.
 
 ## Struktura potoku danych (Data Pipeline)
-1. **Raw (`data/raw/`)**: Surowe ortofotomapy i maski pobrane z WMS (1024x1024).
-2. **Interim (`data/interim/`)**: Maski wyczyszczone z szumów algorytmami morfologicznymi (1024x1024).
-3. **Processed (`data/processed/`)**: Obrazy i wyczyszczone maski pocięte na kafle (np. 256x256) gotowe do treningu U-Net.
+
+Dane przechodzą przez kolejne foldery — na każdym etapie zostają zachowane, więc nic nie ginie:
+
+1. **Raw (`data/raw/`)** — surowe ortofotomapy i maski budynków pobrane z WMS (1024x1024).
+2. **Interim (`data/interim/`)** — maski po wstępnym czyszczeniu morfologicznym i wyzerowaniu miast przez klasyfikator (1024x1024).
+3. **Processed (`data/processed/`)** — obrazy i maski pocięte na kafle 256x256 (pełna, nieprzefiltrowana pula).
+4. **Fitted (`data/fitted/`)** — **ręcznie wyselekcjonowane, dobre kafle** (przez `review_masks.py`). To **na nich** trenuje się U-Net.
+
+```
+raw  ──►  interim  ──►  processed  ──►  fitted  ──►  trening U-Net
+(WMS)    (czyszcz.)     (kafle)      (ręczny filtr)
+```
+
+### Dlaczego istnieje krok `fitted`?
+
+Maski generowane automatycznie z danych BDOT10k bywają błędne — np. siedzą na obiektach, których fizycznie jeszcze nie ma (budynki w budowie, plac z piaskiem) albo są przesunięte względem zdjęcia. Trening na takich sprzecznych etykietach ogranicza skuteczność modelu. Ręczny przegląd (`review_masks.py`) odsiewa złe pary obraz–maska i zostawia tylko te, gdzie maska faktycznie pokrywa dach. Dzięki temu U-Net uczy się na czystych danych.
+
+**Zbiór walidacyjny** powstaje naturalnie: kafle z `processed`, których **nie ma** w `fitted`, to dane niewidziane przez model — `visualize_predictions.py` pokazuje predykcje właśnie na nich.
+
+## Uruchamianie potoku
+
+Kroki `main.py` (zalecane uruchamianie pojedynczo — krok `fetch` może chwilowo zablokować dostęp do Geoportalu):
+
+```bash
+python main.py --step fetch              # 1. pobranie ortofoto + masek z WMS  -> data/raw
+python main.py --step train_classifier   # 2. trening klasyfikatora miasto/wieś
+python main.py --step prepare_masks       # 3. czyszczenie masek + zerowanie miast -> data/interim
+python main.py --step preprocess          # 4. cięcie na kafle 256x256          -> data/processed
+python review_masks.py                    # 4b. RĘCZNY filtr dobrych kafli       -> data/fitted
+python main.py --step train_unet          # 5. trening U-Net na data/fitted      -> unet_weights.pth
+python main.py --step predict --image <ścieżka>   # predykcja + zliczenie budynków
+```
+
+Krok `4b` (`review_masks.py`) jest manualny i wykonuje się między cięciem na kafle a treningiem.
 
 ## Struktura i architektura projektu
 
-Projekt składa się z kilku powiązanych ze sobą modułów, które realizują pełen proces: od pobrania danych, przez przygotowanie masek i wykluczenie miast (klasyfikator), aż po segmentację budynków na obszarach wiejskich (model U-Net) i ich zliczenie.
-
----
+Projekt realizuje pełen proces: od pobrania danych, przez przygotowanie i ręczną kontrolę masek oraz wykluczenie miast (klasyfikator), aż po segmentację budynków na obszarach wiejskich (U-Net) i ich zliczenie.
 
 ### **`main.py`** (Plik startowy)
 
-Plik startowy (entrypoint) całego projektu. Zarządza przepływem działania aplikacji (pipeline). Wykorzystuje bibliotekę `argparse` do przyjmowania argumentów z linii komend, co pozwala na uruchomienie poszczególnych etapów (np. pobierania danych, treningu czy predykcji) lub całego procesu naraz (flaga `--step all`). Plik ten zawiera również predefiniowane współrzędne (`CENTER_POINTS`) dla różnych typów miast i wsi, z których pobierane są dane satelitarne. Kroki wykonywania potoku są opisane tekstowo w pliku. Zalecane jest uruchamianie pojedynczo od kroku 2 do ostatniego kroku predict z uwagi na to, że wykonanie kroku 1 fetch może zablokować użytkownika na geoportal.
+Entrypoint całego projektu. Zarządza przepływem działania (pipeline) przez `argparse` — pozwala uruchomić pojedyncze etapy albo cały proces naraz (flaga `--step all`). Zawiera predefiniowane współrzędne (`CENTER_POINTS`) obszarów, z których pobierane są dane.
 
 ---
 
 ## Folder `src/` (Kluczowe moduły)
 
 * **`data_fetcher.py` (Pobieranie danych)**
-Odpowiada za automatyczne pobieranie danych na podstawie podanych współrzędnych geograficznych.
-* Łączy się z serwisem WMS Geoportalu (GUGiK), aby pobrać zdjęcia satelitarne (ortofotomapy) o wysokiej rozdzielczości.
-* Łączy się z serwisem WMS Krajowej Integracji Ewidencji Gruntów, aby pobrać maski budynków (kształty, gdzie obiekty faktycznie stoją).
-
+Automatyczne pobieranie danych na podstawie współrzędnych geograficznych.
+    * Łączy się z WMS Geoportalu (GUGiK), aby pobrać ortofotomapy wysokiej rozdzielczości.
+    * Łączy się z WMS Krajowej Integracji Ewidencji Gruntów, aby pobrać maski budynków (gdzie obiekty faktycznie stoją).
 
 * **`classifier_model.py` (Klasyfikator Miasto vs. Wieś)**
-Definiuje model sieci neuronowej oparty na architekturze **ResNet-18** (z wgranymi domyślnymi wagami pre-trenowanymi na obrazach). Model ten został zmodyfikowany na końcu (ostatnia warstwa) w taki sposób, aby zamiast 1000 klas wyrzucał jedną wartość – dokonuje klasyfikacji binarnej. Jego jedynym celem jest ocena, czy dane zdjęcie satelitarne przedstawia miasto, czy wieś.
+Model oparty na architekturze **ResNet-18** (z wagami pre-trenowanymi), z ostatnią warstwą zmodyfikowaną do klasyfikacji binarnej. Ocenia, czy zdjęcie przedstawia miasto, czy wieś.
+
 * **`mask_preparation.py` (Inteligentne czyszczenie masek)**
-Ten moduł działa jako "bramkarz" (*Data Gatekeeper*). Wykorzystuje wytrenowany model z `classifier_model.py`.
-* Ocenia każde zdjęcie. Jeśli model uzna, że zdjęcie to **MIASTO**, maska budynków dla tego zdjęcia jest w całości zerowana (czyszczona do czerni), ponieważ celem projektu jest szukanie budynków tylko na wsi.
-* Jeśli to **WIEŚ**, algorytm "czyści" maskę (np. używając operacji morfologicznych z biblioteki OpenCV), aby była wyraźniejsza i wolna od małych zakłóceń, zachowując kontury budynków.
+Działa jak "bramkarz" (*Data Gatekeeper*) z użyciem wytrenowanego klasyfikatora.
+    * Jeśli zdjęcie to **MIASTO** — maska jest w całości zerowana (cel projektu to budynki na wsi).
+    * Jeśli **WIEŚ** — maska jest czyszczona operacjami morfologicznymi (OpenCV), zachowując kontury budynków.
 
+* **`preprocessing.py` (Cięcie na kafle)**
+    * Wycięcie centralne (*Center Crop*) z dużych zdjęć (1024x1024 → 512x512).
+    * Rozcięcie zdjęć i masek na kafle 256x256 (*Tiling*). Kafle z pustą maską (miasta) trafiają do osobnego folderu i nie wchodzą do treningu.
 
-* **`preprocessing.py` (Przygotowanie danych do U-Net)**
-Przygotowuje zdjęcia i oczyszczone maski dla głównego modelu do segmentacji.
-* Dokonuje wycięcia centralnego (*Center Crop*) z dużych zdjęć (np. z 1024x1024 na 512x512).
-* Rozcina te zdjęcia oraz maski na mniejsze "kafle" o wymiarach 256x256 pikseli (*Tiling*), co jest optymalnym rozmiarem ułatwiającym nauczanie modelu U-Net.
-
+* **`datasets.py` (Wczytywanie danych)**
+Klasy `Dataset` dla PyTorch: `RawClassifierDataset` (klasyfikator) i `BuildingDataset` (U-Net, z augmentacją i opcjonalnym cache w RAM).
 
 * **`trainer.py` (Zarządzanie procesem uczenia)**
-Zawiera logikę ładowania danych (`Dataset` i `DataLoader` z biblioteki PyTorch) oraz pętle uczące dla obu modeli:
-* `train_classifier()` - uczy model ResNet-18 odróżniać miasta (Label: `1.0`) od wsi (Label: `0.0`) na surowych danych. Zapisuje jego "mózg" do `classifier_weights.pth`.
-* `train_model()` - uczy główny model U-Net (na pociętych kaflach), jak wygląda zarys budynków na wsi. Zapisuje wagi do `unet_weights.pth`.
+Pętle uczące dla obu modeli:
+    * `train_classifier()` — uczy ResNet-18 odróżniać miasta (`1.0`) od wsi (`0.0`); zapisuje `classifier_weights.pth`.
+    * `train_model()` — uczy U-Net segmentacji budynków na kaflach z **`data/fitted`** (early stopping na Val Dice); zapisuje `unet_weights.pth`.
 
+* **`unet_model.py` (Architektura segmentacji)**
+Klasyczna architektura **U-Net** — ścieżka kodująca wyciąga cechy, dekodująca odbudowuje obraz do precyzyjnej maski pikseli budynków.
 
-* **`unet_model.py` (Architektura modelu segmentacji)**
-Definiuje główny model sieci neuronowej o architekturze **U-Net**. Jest to klasyczna architektura, która z jednej strony "zgniata" obraz, aby wyciągnąć z niego cechy, a następnie odbudowuje go do oryginalnego rozmiaru, zwracając precyzyjną maskę wskazującą dokładne piksele, gdzie na obrazku wejściowym znajduje się budynek.
 * **`postprocessing.py` (Predykcja i Zliczanie)**
-Używany na samym końcu do testowania wytrenowanego modelu na nowych zdjęciach.
-* Odbiera polecenie predykcji konkretnego zdjęcia.
-* Przepuszcza zdjęcie przez wytrenowany model U-Net, który generuje nową, wyestymowaną maskę budynków.
-* Analizuje stworzoną maskę przy pomocy OpenCV (`connectedComponentsWithStats`), by policzyć osobne "plamy" i zwraca informację o ilości wykrytych budynków na zdjęciu, zapisując podgląd do pliku.
+    * Przepuszcza zdjęcie przez wytrenowany U-Net, generując maskę budynków.
+    * `build_clean_mask` czyści maskę i liczy osobne obiekty (`connectedComponentsWithStats`).
+    * `draw_instances` rysuje kontury i etykiety budynków; `interactive_instance_viewer` pokazuje wynik interaktywnie (Plotly).
+
+---
+
+## Skrypty pomocnicze (katalog główny)
+
+* **`review_masks.py` (Ręczny filtr masek)**
+Przegląd par obraz+maska z `data/processed` z nałożoną maską. Akceptowane (maska na dachu) trafiają do `data/fitted`, odrzucane są pomijane. Obsługuje wznawianie — można robić na raty.
+
+* **`visualize_predictions.py` (Masowa wizualizacja)**
+Składa predykcje na wielu kaflach **walidacyjnych** (spoza `fitted`) w jedną siatkę z liczbą wykrytych budynków. Wynik → `predictions_grid.png`.
