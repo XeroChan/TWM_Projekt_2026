@@ -18,7 +18,6 @@ def plot_metrics(history, title, save_path):
     
     plt.figure(figsize=(12, 5))
     
-    # Wykres funkcji straty
     plt.subplot(1, 2, 1)
     plt.plot(epochs, history['train_loss'], 'b-', label='Train Loss')
     plt.plot(epochs, history['val_loss'], 'r-', label='Val Loss')
@@ -28,7 +27,6 @@ def plot_metrics(history, title, save_path):
     plt.legend()
     plt.grid(True)
     
-    # Wykres wybranej metryki (np. Accuracy lub IoU)
     plt.subplot(1, 2, 2)
     if 'train_acc' in history:
         plt.plot(epochs, history['train_acc'], 'b-', label='Train Acc')
@@ -79,7 +77,6 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=15,
     history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
     for epoch in range(epochs):
-        # --- trening ---
         model.train()
         train_loss = train_acc = 0.0
         loop = tqdm(train_loader, leave=False, desc=f"Klasyfikator Epoka [{epoch+1}/{epochs}]")
@@ -102,7 +99,6 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=15,
         train_loss /= len(train_loader)
         train_acc /= len(train_loader)
 
-        # --- walidacja ---
         model.eval()
         val_loss = val_acc = 0.0
         with torch.no_grad():
@@ -127,7 +123,6 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=15,
         
         print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
         
-        # Early Stopping & Model Checkpointing
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
@@ -141,20 +136,25 @@ def train_classifier(raw_dir="data/raw", batch_size=8, epochs=15,
 
     print("Trening klasyfikatora zakończony!")
     
-    # Generowanie wykresów
     plot_path = save_path.replace(".pth", "_metrics.png")
     plot_metrics(history, title="Klasyfikator (Miasto vs Wieś)", save_path=plot_path)
 
 
-def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
-                save_path="models/unet_weights.pth", val_split=0.15, patience=10):
+def train_model(processed_dir="data/fitted", batch_size=8, epochs=80,
+                save_path="models/unet_weights.pth", val_split=0.1, patience=10):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(123)
+    torch.cuda.manual_seed_all(123)
 
     img_dir = os.path.join(processed_dir, "images")
     mask_dir = os.path.join(processed_dir, "masks")
 
-    all_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.png')])
-    random.seed(42)
+    all_files = []
+    for f in os.listdir(img_dir):
+        if f.endswith('.png'):
+            all_files.append(f)
+    all_files.sort()
+    random.seed(123)
     random.shuffle(all_files)
     val_size = max(1, int(len(all_files) * val_split))
     val_files = all_files[:val_size]
@@ -172,8 +172,9 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
     )
 
     model = UNet(in_channels=3, out_channels=1).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    pos_weight = torch.tensor([4.0]).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=4e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+    pos_weight = torch.tensor([3.0]).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -184,7 +185,6 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
     history = {'train_loss': [], 'val_loss': [], 'train_dice': [], 'val_dice': [], 'train_iou': [], 'val_iou': []}
 
     for epoch in range(epochs):
-        # --- trening ---
         model.train()
         train_loss = train_dice = train_iou = 0.0
         loop = tqdm(train_loader, leave=False, desc=f"U-Net Epoka [{epoch+1}/{epochs}]")
@@ -194,22 +194,22 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
             probs = torch.sigmoid(outputs)
             
             d_coeff = dice_coeff(probs, masks)
-            loss = criterion(outputs, masks) + (1.0 - d_coeff)
-            
+            loss = criterion(outputs, masks) + 2.0 * (1.0 - d_coeff)
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             train_loss += loss.item()
             train_dice += d_coeff.item()
             train_iou += iou_coeff(probs, masks).item()
-            loop.set_postfix(loss=loss.item())
+            loop.set_postfix(loss=f"{loss.item():.3f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
 
+        scheduler.step()
         train_loss /= len(train_loader)
         train_dice /= len(train_loader)
         train_iou /= len(train_loader)
 
-        # --- walidacja ---
         model.eval()
         val_loss = val_dice = val_iou = 0.0
         with torch.no_grad():
@@ -219,14 +219,11 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
                 probs = torch.sigmoid(outputs)
                 
                 d_coeff = dice_coeff(probs, masks)
-                loss = criterion(outputs, masks) + (1.0 - d_coeff)
-                
+                loss = criterion(outputs, masks) + 2.0 * (1.0 - d_coeff)
+
                 val_loss += loss.item()
 
-                # Sprawdzanie czy wartość progowa jest większa niż 0.5, aby uzyskać binarną maskę
                 preds_binary = (probs > 0.5).float()
-
-                # Metryki ewaluacyjne na binarnych maskach
                 val_dice += dice_coeff(preds_binary, masks).item()
                 val_iou += iou_coeff(preds_binary, masks).item()
 
@@ -243,7 +240,7 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
         
         print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} Dice: {train_dice:.4f} IoU: {train_iou:.4f} | Val Loss: {val_loss:.4f} Dice: {val_dice:.4f} IoU: {val_iou:.4f}")
 
-        # Early Stopping na podstawie najwyższego Val Dice (a nie Loss)
+        # early stopping na Val Dice, nie Loss
         if val_dice > best_val_dice:
             best_val_dice = val_dice
             epochs_no_improve = 0
@@ -257,6 +254,5 @@ def train_model(processed_dir="data/processed", batch_size=8, epochs=50,
 
     print(f"Trening U-Net zakończony. Najlepszy Val Dice: {best_val_dice:.4f}")
     
-    # Generowanie wykresów
     plot_path = save_path.replace(".pth", "_metrics.png")
     plot_metrics(history, title="U-Net (Segmentacja)", save_path=plot_path)

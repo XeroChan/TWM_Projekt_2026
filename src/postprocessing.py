@@ -10,22 +10,16 @@ from src.unet_model import UNet
 from src.utils import image_to_tensor, load_model
 
 
-def interactive_instance_viewer(original_img_path: str, prediction_mask_path: str):
-    img = cv2.imread(original_img_path)
-    mask = cv2.imread(prediction_mask_path, cv2.IMREAD_GRAYSCALE)
-    if img is None or mask is None:
-        print("Błąd: Nie można wczytać obrazu lub maski!")
-        return
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
+def draw_instances(img_rgb: np.ndarray, mask: np.ndarray, min_area: int = 10) -> np.ndarray:
+    out = img_rgb.copy()
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     for i, cnt in enumerate(contours):
-        if cv2.contourArea(cnt) < 10:
+        if cv2.contourArea(cnt) < min_area:
             continue
 
         color = (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
-        cv2.drawContours(img_rgb, [cnt], -1, color, thickness=1)
+        cv2.drawContours(out, [cnt], -1, color, thickness=1)
 
         x, y, w, h = cv2.boundingRect(cnt)
         label = f"Budynek {i + 1}"
@@ -44,11 +38,22 @@ def interactive_instance_viewer(original_img_path: str, prediction_mask_path: st
             bg_y2 = y + h + text_h + padding * 2
             text_y = bg_y2 - padding - baseline
 
-        cv2.rectangle(img_rgb, (x, bg_y1), (x + text_w, bg_y2), (0, 0, 0), thickness=cv2.FILLED)
-        cv2.putText(img_rgb, label, (x, text_y), cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.rectangle(out, (x, bg_y1), (x + text_w, bg_y2), (0, 0, 0), thickness=cv2.FILLED)
+        cv2.putText(out, label, (x, text_y), cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale, color, font_thickness)
+    return out
 
-    fig = px.imshow(img_rgb, title="Detekcja Instancji (Tylko kontury)")
+
+def interactive_instance_viewer(original_img_path: str, prediction_mask_path: str):
+    img = cv2.imread(original_img_path)
+    mask = cv2.imread(prediction_mask_path, cv2.IMREAD_GRAYSCALE)
+    if img is None or mask is None:
+        print("Błąd: Nie można wczytać obrazu lub maski!")
+        return
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    annotated = draw_instances(img_rgb, mask)
+
+    fig = px.imshow(annotated, title="Detekcja Instancji (Tylko kontury)")
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
     fig.update_layout(dragmode="pan", margin=dict(l=0, r=0, b=0, t=30))

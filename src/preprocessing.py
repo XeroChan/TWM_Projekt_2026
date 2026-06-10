@@ -3,9 +3,7 @@ import cv2
 from glob import glob
 
 def center_crop(image, target_size=512):
-    """
-    Wycina centralny obszar z obrazu/maski.
-    """
+    """Wycina centralny obszar target_size x target_size."""
     h, w = image.shape[:2]
     start_x = (w - target_size) // 2
     start_y = (h - target_size) // 2
@@ -34,19 +32,15 @@ def tile_images_and_masks(img_raw_dir="data/raw/images", mask_interim_dir="data/
             print(f"Brak wyczyszczonej maski dla {base_name}, pomijam cięcie.")
             continue
 
-        # Wczytanie obrazu i maski (zwykle 1024x1024)
         img = cv2.imread(img_path)
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
         if img is None or mask is None:
             continue
 
-        # --- TUTAJ WCHODZI TWOJA LOGIKA ---
-        # 1. Przycięcie ZDJĘCIA i MASKI do 512x512
         img_cropped = center_crop(img, target_size=target_size)
         mask_cropped = center_crop(mask, target_size=target_size)
 
-        # 2. Cięcie przyciętego obrazu (512x512) na kafle (256x256)
         print(f"Cięcie centralnego obszaru dla: {base_name}...")
         h, w = img_cropped.shape[:2]
         
@@ -56,9 +50,8 @@ def tile_images_and_masks(img_raw_dir="data/raw/images", mask_interim_dir="data/
                 mask_tile = mask_cropped[y:y+tile_size, x:x+tile_size]
 
                 if img_tile.shape[0] == tile_size and img_tile.shape[1] == tile_size:
-                    # Dodajemy kordynaty do nazwy, żeby kafle się nie nadpisały
                     tile_name = f"{base_name}_{y}_{x}.png"
-                    # Kafel z pustą maską (miasto) idzie do city_folder i nie trafia do treningu
+                    # pusta maska (miasto) -> folder city, poza treningiem
                     if mask_tile.max() == 0:
                         cv2.imwrite(os.path.join(img_cities_out_dir, tile_name), img_tile)
                         cv2.imwrite(os.path.join(mask_cities_out_dir, tile_name), mask_tile)

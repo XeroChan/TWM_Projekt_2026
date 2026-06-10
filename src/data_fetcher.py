@@ -19,7 +19,7 @@ def fetch_all_data(center_points, offset_deg=0.0030, size=1024):
         name = point["name"]
         lon, lat = point["pos"]
         
-        # BBOX w stopniach - IDEALNIE TEN SAM dla zdjęcia i maski
+        # BBOX w stopniach
         bbox = [lon - offset_deg, lat - offset_deg, lon + offset_deg, lat + offset_deg]
         bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
 
@@ -51,7 +51,6 @@ def fetch_all_data(center_points, offset_deg=0.0030, size=1024):
         if not os.path.exists(mask_path):
             print(f"[{name}] Pobieranie masek budynków...")
             
-            # Parametry z wymuszonym EPSG:4326 i identycznym bbox_str
             params = {
                 "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap",
                 "LAYERS": "budynki", "SRS": "EPSG:4326",
@@ -74,6 +73,5 @@ def fetch_all_data(center_points, offset_deg=0.0030, size=1024):
         else:
             print(f"[{name}] Maska gotowa. Pomijam.")
 
-        # Krótka przerwa dla serwera, tylko gdy pobieraliśmy
         if downloaded_anything:
             time.sleep(2)

@@ -30,7 +30,7 @@ def main():
         
     if args.step in ['train_unet', 'all']:
         print("\n--- KROK 5: TRENING GŁÓWNEGO MODELU U-NET ---")
-        train_model(epochs=50)
+        train_model(epochs=40)
         
     if args.step == 'predict':
         if not args.image:
